@@ -78,6 +78,14 @@ func (pool *Pool) Push(w Work) bool {
 	return <-queueItem.result
 }
 
+func (pool *Pool) QueuedWork() int32 {
+	return atomic.AddInt32(&pool.queuedWork, 0)
+}
+
+func (pool *Pool) ActiveWorkers() int32 {
+	return atomic.AddInt32(&pool.activeWorkers, 0)
+}
+
 func (pool *Pool) runWorker(id int) {
 	defer pool.workerWaitGroup.Done()
 	for {
@@ -91,14 +99,6 @@ func (pool *Pool) runWorker(id int) {
 		}
 	}
 
-}
-
-func (pool *Pool) QueuedWork() int32 {
-	return atomic.AddInt32(&pool.queuedWork, 0)
-}
-
-func (pool *Pool) ActiveWorkers() int32 {
-	return atomic.AddInt32(&pool.activeWorkers, 0)
 }
 
 func (pool *Pool) doWork(work Work) {

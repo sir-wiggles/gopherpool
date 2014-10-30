@@ -2,6 +2,7 @@ package gopherpool
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
@@ -17,16 +18,25 @@ type (
 	}
 
 	Pool struct {
-		queueChannel          chan payload
-		workChannel           chan Work
-		queueShutdownChannel  chan bool
-		workerShutdownChannel chan bool
-		workerWaitGroup       *sync.WaitGroup
-		queuedWork            int32
-		activeWorkers         int32
-		queueCapacity         int32
-		numberOfWorkers       int
-		processedJobs         uint64
+		queueChannel          chan payload    // channel users put work
+		workChannel           chan Work       // channel the gophers get the work form
+		queueShutdownChannel  chan bool       // channel to shutdown the pool
+		workerShutdownChannel chan bool       // channel to shutdown gophers
+		workerWaitGroup       *sync.WaitGroup // wait group for all workers in the queue
+		currentQueuedWork     int32           // current number of messages in the queue
+		activeWorkers         int32           // current number of workers activaly processing work
+		queueCapacity         int32           // capacity of message the queue can hold
+		numberOfWorkers       int             // number of workers running
+		totalQueuedWork       uint64          // number of jobs queued for the life of the pool
+		processedJobs         uint64          // number of jobs that were successful
+		panicCount            uint64          // number of panics that occured doing work
+	}
+
+	PoolStats struct {
+		GophersStarted  int
+		TotalJobsQueued uint64
+		ProcessedJobs   uint64
+		PanicCount      uint64
 	}
 )
 
@@ -90,12 +100,22 @@ func (pool *Pool) Push(w Work) bool {
 
 // Returns the count of queued works
 func (pool *Pool) QueuedWork() int32 {
-	return atomic.AddInt32(&pool.queuedWork, 0)
+	return atomic.AddInt32(&pool.currentQueuedWork, 0)
 }
 
 // Returns the count of active workers
 func (pool *Pool) ActiveWorkers() int32 {
 	return atomic.AddInt32(&pool.activeWorkers, 0)
+}
+
+// Stats of the pool's progress
+func (pool *Pool) Stats() *PoolStats {
+	return &PoolStats{
+		GophersStarted:  pool.numberOfWorkers,
+		TotalJobsQueued: pool.totalQueuedWork,
+		ProcessedJobs:   pool.processedJobs,
+		PanicCount:      pool.panicCount,
+	}
 }
 
 // Looping gopher pulling work off the work queue until something comes on the
@@ -112,7 +132,7 @@ func (pool *Pool) runWorker(id int) {
 			)
 			return
 		case work := <-pool.workChannel:
-			atomic.AddInt32(&pool.queuedWork, -1)
+			atomic.AddInt32(&pool.currentQueuedWork, -1)
 			pool.doWork(work)
 		}
 	}
@@ -121,6 +141,7 @@ func (pool *Pool) runWorker(id int) {
 
 // Where the actual work gets done
 func (pool *Pool) doWork(work Work) {
+	defer pool.lifeguard("DoWork")
 	defer atomic.AddInt32(&pool.activeWorkers, -1)
 	atomic.AddInt32(&pool.activeWorkers, 1)
 	work.DoWork()
@@ -139,13 +160,30 @@ func (pool *Pool) distributor() {
 			}
 			return
 		case queueItem := <-pool.queueChannel:
-			if atomic.AddInt32(&pool.queuedWork, 0) == pool.queueCapacity {
+			if atomic.AddInt32(&pool.currentQueuedWork, 0) == pool.queueCapacity {
 				queueItem.resultChannel <- false
 				continue
 			}
-			atomic.AddInt32(&pool.queuedWork, 1)
+			atomic.AddInt32(&pool.currentQueuedWork, 1)
+			atomic.AddUint64(&pool.totalQueuedWork, 1)
 			pool.workChannel <- queueItem.work
 			queueItem.resultChannel <- true
 		}
+	}
+}
+
+func (pool *Pool) lifeguard(functionName string) {
+	if r := recover(); r != nil {
+		defer atomic.AddUint64(&pool.panicCount, 1)
+		// Capture the stack trace
+		buf := make([]byte, 10000)
+		runtime.Stack(buf, false)
+
+		fmt.Printf(
+			"PANIC Defered in %s [%v] : Stack Trace : %v",
+			functionName,
+			r,
+			string(buf),
+		)
 	}
 }

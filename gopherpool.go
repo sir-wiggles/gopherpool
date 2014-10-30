@@ -1,4 +1,4 @@
-package cesspool
+package gopherpool
 
 import (
 	"fmt"

@@ -40,8 +40,8 @@ func NewPool(numberOfWorkers int, queueCapacity int32) *Pool {
 	pool := Pool{
 		queueChannel:          make(chan payload),
 		workChannel:           make(chan Work, workers),
-		queueShutdownChannel:  make(chan bool, 1),
-		workerShutdownChannel: make(chan bool, 1),
+		queueShutdownChannel:  make(chan bool),
+		workerShutdownChannel: make(chan bool, workers),
 		workerWaitGroup:       new(sync.WaitGroup),
 		queueCapacity:         queueCapacity,
 		numberOfWorkers:       workers,

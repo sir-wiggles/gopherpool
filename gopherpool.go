@@ -18,18 +18,20 @@ type (
 	}
 
 	Pool struct {
-		queueChannel          chan payload    // channel users put work
-		workChannel           chan Work       // channel the gophers get the work form
-		queueShutdownChannel  chan bool       // channel to shutdown the pool
-		workerShutdownChannel chan bool       // channel to shutdown gophers
-		workerWaitGroup       *sync.WaitGroup // wait group for all workers in the queue
-		currentQueuedWork     int32           // current number of messages in the queue
-		activeWorkers         int32           // current number of workers activaly processing work
-		queueCapacity         int32           // capacity of message the queue can hold
-		numberOfWorkers       int             // number of workers running
-		totalQueuedWork       uint64          // number of jobs queued for the life of the pool
-		processedJobs         uint64          // number of jobs that were successful
-		panicCount            uint64          // number of panics that occured doing work
+		queueChannel          chan payload // channel users put work
+		workChannel           chan Work    // channel the gophers get the work form
+		queueShutdownChannel  chan bool    // channel to shutdown the pool
+		workerShutdownChannel chan bool    // channel to shutdown gophers
+
+		workerWaitGroup *sync.WaitGroup // wait group for all workers in the queue
+
+		currentQueuedWork int32  // current number of messages in the queue
+		activeWorkers     int32  // current number of workers activaly processing work
+		queueCapacity     int32  // capacity of message the queue can hold
+		numberOfWorkers   int    // number of workers running
+		totalQueuedWork   uint64 // number of jobs queued for the life of the pool
+		processedJobs     uint64 // number of jobs that were successful
+		panicCount        uint64 // number of panics that occured doing work
 	}
 
 	PoolStats struct {
@@ -136,7 +138,6 @@ func (pool *Pool) runWorker(id int) {
 			pool.doWork(work)
 		}
 	}
-
 }
 
 // Where the actual work gets done
@@ -172,6 +173,7 @@ func (pool *Pool) distributor() {
 	}
 }
 
+// Handle any panic that may occure in DoWork
 func (pool *Pool) lifeguard(functionName string) {
 	if r := recover(); r != nil {
 		defer atomic.AddUint64(&pool.panicCount, 1)
@@ -181,9 +183,7 @@ func (pool *Pool) lifeguard(functionName string) {
 
 		fmt.Printf(
 			"PANIC Defered in %s [%v] : Stack Trace : %v",
-			functionName,
-			r,
-			string(buf),
+			functionName, r, string(buf),
 		)
 	}
 }

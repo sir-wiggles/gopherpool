@@ -12,8 +12,8 @@ type Work interface {
 
 type (
 	payload struct {
-		work   Work
-		result chan bool
+		work          Work
+		resultChannel chan bool
 	}
 
 	Pool struct {
@@ -31,29 +31,35 @@ type (
 )
 
 // Starts all the threads needed for the pool
-func NewPool(numberOfWorkers int, queueCapacity int32) *Pool {
-	var workers int
-	if numberOfWorkers == 0 {
-		workers = 1
-	} else {
-		workers = numberOfWorkers
+func NewPool(numberOfWorkers, queueCapacity, workQueueCapacity int32) *Pool {
+
+	if numberOfWorkers <= 0 {
+		numberOfWorkers = 1
+	}
+
+	if queueCapacity <= 0 {
+		queueCapacity = 1
+	}
+
+	if workQueueCapacity <= 0 {
+		workQueueCapacity = numberOfWorkers
 	}
 
 	pool := Pool{
-		queueChannel:          make(chan payload),
-		workChannel:           make(chan Work, queueCapacity),
+		queueChannel:          make(chan payload, queueCapacity),
+		workChannel:           make(chan Work, workQueueCapacity),
 		queueShutdownChannel:  make(chan bool),
-		workerShutdownChannel: make(chan bool, workers),
+		workerShutdownChannel: make(chan bool, numberOfWorkers),
 		workerWaitGroup:       new(sync.WaitGroup),
 		queueCapacity:         queueCapacity,
-		numberOfWorkers:       workers,
+		numberOfWorkers:       int(numberOfWorkers),
 	}
 
 	go pool.distributor()
 
 	// +1 for the distributor
-	pool.workerWaitGroup.Add(workers + 1)
-	for workerID := 0; workerID < workers; workerID++ {
+	pool.workerWaitGroup.Add(int(numberOfWorkers) + 1)
+	for workerID := 0; workerID < int(numberOfWorkers); workerID++ {
 		go pool.runWorker(workerID)
 	}
 	return &pool
@@ -69,7 +75,7 @@ func (pool *Pool) Shutdown() bool {
 	pool.queueShutdownChannel <- true
 
 	pool.workerWaitGroup.Wait()
-	fmt.Println("Gopherpool closed")
+	fmt.Println("Gopher pool closed")
 
 	return true
 }
@@ -77,9 +83,9 @@ func (pool *Pool) Shutdown() bool {
 // How you put message on the work queue
 func (pool *Pool) Push(w Work) bool {
 	queueItem := payload{w, make(chan bool)}
-	defer close(queueItem.result)
+	defer close(queueItem.resultChannel)
 	pool.queueChannel <- queueItem
-	return <-queueItem.result
+	return <-queueItem.resultChannel
 }
 
 // Returns the count of queued works
@@ -99,7 +105,11 @@ func (pool *Pool) runWorker(id int) {
 	for {
 		select {
 		case <-pool.workerShutdownChannel:
-			fmt.Printf("Gopher %3d sinking, %3d gophers remaining\n", id, pool.activeWorkers)
+			fmt.Printf(
+				"Gopher %3d drowing, %3d gophers remaining\n",
+				id,
+				pool.activeWorkers,
+			)
 			return
 		case work := <-pool.workChannel:
 			atomic.AddInt32(&pool.queuedWork, -1)
@@ -123,19 +133,19 @@ func (pool *Pool) distributor() {
 	for {
 		select {
 		case <-pool.queueShutdownChannel:
-			fmt.Println("Closing pool")
+			fmt.Println("Closing gopher pool")
 			for worker := 0; worker < pool.numberOfWorkers; worker++ {
 				pool.workerShutdownChannel <- true
 			}
 			return
 		case queueItem := <-pool.queueChannel:
 			if atomic.AddInt32(&pool.queuedWork, 0) == pool.queueCapacity {
-				queueItem.result <- false
+				queueItem.resultChannel <- false
 				continue
 			}
 			atomic.AddInt32(&pool.queuedWork, 1)
 			pool.workChannel <- queueItem.work
-			queueItem.result <- true
+			queueItem.resultChannel <- true
 		}
 	}
 }
